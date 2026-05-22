@@ -2,7 +2,7 @@
 set -e
 
 echo "Running migrations..."
-python manage.py makemigrations accounts cases documents audit notifications
+python manage.py makemigrations accounts cases documents audit notifications system
 python manage.py migrate
 
 echo "Collecting static files..."

@@ -6,6 +6,7 @@ import { useIsMobile } from '@/hooks/use-mobile'
 import { Sheet, SheetContent } from '@/components/ui/sheet'
 import AppSidebar from './AppSidebar'
 import AppHeader from './AppHeader'
+import { AppRouteBreadcrumbs } from './AppRouteBreadcrumbs'
 
 export default function AppLayout() {
   const { setUser, user } = useAuthStore()
@@ -48,6 +49,7 @@ export default function AppLayout() {
       <div className="flex flex-1 flex-col overflow-hidden min-w-0">
         <AppHeader onToggle={handleToggle} />
         <main className="flex-1 overflow-y-auto p-4 md:p-6">
+          <AppRouteBreadcrumbs />
           <Outlet />
         </main>
       </div>

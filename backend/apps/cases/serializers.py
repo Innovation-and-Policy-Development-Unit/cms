@@ -100,6 +100,7 @@ class CaseDetailSerializer(serializers.ModelSerializer):
     litigation_records = LitigationRecordSerializer(many=True, read_only=True)
     initiating_officer_detail = UserSerializer(source='initiating_officer', read_only=True)
     assigned_officer_detail = UserSerializer(source='assigned_officer', read_only=True)
+    portal_approved_by_detail = UserSerializer(source='portal_approved_by', read_only=True)
     overall_sla_status = serializers.CharField(read_only=True)
 
     class Meta:
@@ -114,7 +115,7 @@ class CaseDetailSerializer(serializers.ModelSerializer):
             'stages', 'decisions', 'litigation_records',
             'cdp_submission_id', 'cdp_submission_ref', 'cdp_callback_url',
             'portal_form_type_code', 'portal_approval_status',
-            'initiator_compliance_role', 'portal_approved_by',
+            'initiator_compliance_role', 'portal_approved_by', 'portal_approved_by_detail',
             'portal_approved_at', 'portal_approval_notes', 'portal_sent_at',
         ]
         read_only_fields = [

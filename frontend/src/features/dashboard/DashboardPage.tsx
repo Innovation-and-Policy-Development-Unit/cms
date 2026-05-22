@@ -1,6 +1,7 @@
 import { useNavigate } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
-import { Briefcase, CheckCircle, AlertTriangle, Clock, ArrowRight, Activity } from 'lucide-react'
+import { Briefcase, CheckCircle, AlertTriangle, Clock, ArrowRight, Activity, ClipboardCheck } from 'lucide-react'
+import { usePermissions } from '@/hooks/use-permissions'
 import { dashboardAPI, casesAPI, auditAPI } from '@/api/ccms'
 import { useAuthStore } from '@/stores/authStore'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -9,18 +10,8 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts'
 
-const FAMILY_LABEL: Record<string, string> = {
-  employee_disciplinary:       'Employee Disciplinary',
-  serious_misconduct_employee: 'Serious Misconduct',
-  temporary_suspension:        'Temp. Suspension',
-  grievance:                   'Grievance',
-  senior_serious_misconduct:   'Senior — Misconduct',
-  senior_poor_performance:     'Senior — Performance',
-}
-
-const SLA_VARIANT: Record<string, 'destructive' | 'warning' | 'success' | 'secondary'> = {
-  overdue: 'destructive', at_risk: 'warning', on_track: 'success', completed: 'secondary',
-}
+import { FAMILY_LABEL } from '@/lib/case-labels'
+import { SlaBadge } from '@/components/ui/sla-badge'
 
 const CHART_COLORS = ['#3C50E0', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4']
 
@@ -50,6 +41,7 @@ function KpiCard({ title, value, icon: Icon, bg, sub }: {
 export default function DashboardPage() {
   const navigate = useNavigate()
   const { user } = useAuthStore()
+  const perms = usePermissions()
   const { data: stats } = useQuery({
     queryKey: ['dashboard'],
     queryFn: () => dashboardAPI.stats().then((r) => r.data),
@@ -63,6 +55,15 @@ export default function DashboardPage() {
   const { data: auditData, isLoading: auditLoading } = useQuery({
     queryKey: ['audit', { dashboard: true }],
     queryFn: () => auditAPI.list({ page_size: 6 }).then((r) => r.data),
+  })
+
+  const { data: pendingApprovals = 0 } = useQuery({
+    queryKey: ['cases', 'pending-approval-count'],
+    queryFn: () =>
+      casesAPI
+        .list({ portal_approval_status: 'pending_manager', page_size: 1 })
+        .then((r) => (r.data?.count ?? 0) as number),
+    enabled: perms.canApprovePortal,
   })
 
   const allActive: Record<string, unknown>[] = activeData?.results ?? activeData ?? []
@@ -104,6 +105,28 @@ export default function DashboardPage() {
         <KpiCard title="Closed Cases"   value={stats?.closed_cases}  icon={CheckCircle}   bg="bg-emerald-500"   sub="Resolved" />
         <KpiCard title="Overdue Stages" value={stats?.overdue_cases} icon={AlertTriangle} bg="bg-rose-500"      sub="Require immediate action" />
       </div>
+
+      {perms.canApprovePortal && pendingApprovals > 0 && (
+        <Card className="border-amber-200 bg-amber-50/40 dark:border-amber-900 dark:bg-amber-950/20">
+          <CardContent className="flex flex-wrap items-center justify-between gap-4 py-4">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-amber-500 text-white">
+                <ClipboardCheck className="h-5 w-5" />
+              </div>
+              <div>
+                <p className="font-semibold">Portal approval queue</p>
+                <p className="text-sm text-muted-foreground">
+                  {pendingApprovals} case{pendingApprovals === 1 ? '' : 's'} awaiting manager approval for SCDMS
+                </p>
+              </div>
+            </div>
+            <Button onClick={() => navigate({ to: '/approvals' })} className="gap-2">
+              Review queue
+              <ArrowRight className="h-4 w-4" />
+            </Button>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Row 2 — Chart + Urgent */}
       <div className="grid gap-4 lg:grid-cols-5">
@@ -154,9 +177,7 @@ export default function DashboardPage() {
                   <p className="text-xs font-mono font-semibold text-primary truncate">{c.reference_number as string}</p>
                   <p className="text-sm font-medium truncate leading-tight">{c.subject_name as string}</p>
                 </div>
-                <Badge variant={SLA_VARIANT[c.overall_sla_status as string] ?? 'secondary'} className="ml-2 shrink-0 text-xs">
-                  {(c.overall_sla_status as string)?.replace('_', ' ')}
-                </Badge>
+                <SlaBadge status={c.overall_sla_status as string} className="ml-2 shrink-0" size="sm" />
               </div>
             ))}
           </CardContent>
@@ -228,9 +249,7 @@ export default function DashboardPage() {
                     {(c.active_stage as Record<string, string>)?.name ?? 'No active stage'}
                   </p>
                 </div>
-                <Badge variant={SLA_VARIANT[c.overall_sla_status as string] ?? 'secondary'} className="ml-2 shrink-0 text-xs">
-                  {(c.overall_sla_status as string)?.replace('_', ' ')}
-                </Badge>
+                <SlaBadge status={c.overall_sla_status as string} className="ml-2 shrink-0" size="sm" />
               </div>
             ))}
           </CardContent>

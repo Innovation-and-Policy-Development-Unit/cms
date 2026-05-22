@@ -5,26 +5,17 @@ import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { AlertTriangle, Clock, CheckCircle, TrendingUp } from 'lucide-react'
+import { AlertTriangle, Clock, CheckCircle, TrendingUp, Plus } from 'lucide-react'
+import { usePermissions } from '@/hooks/use-permissions'
+import { Button } from '@/components/ui/button'
+import { TableEmptyState } from '@/components/ui/empty-state'
 
-const SLA_VARIANT: Record<string, 'destructive' | 'warning' | 'success' | 'secondary'> = {
-  overdue: 'destructive',
-  at_risk: 'warning',
-  on_track: 'success',
-  completed: 'secondary',
-}
-
-const FAMILY_LABEL: Record<string, string> = {
-  employee_disciplinary: 'Employee Disciplinary',
-  serious_misconduct_employee: 'Serious Misconduct',
-  temporary_suspension: 'Temp. Suspension',
-  grievance: 'Grievance',
-  senior_serious_misconduct: 'Senior — Misconduct',
-  senior_poor_performance: 'Senior — Performance',
-}
+import { familyLabel } from '@/lib/case-labels'
+import { SlaBadge } from '@/components/ui/sla-badge'
 
 export default function ComplianceReportPage() {
   const navigate = useNavigate()
+  const perms = usePermissions()
 
   const { data, isLoading } = useQuery({
     queryKey: ['cases-compliance'],
@@ -53,7 +44,7 @@ export default function ComplianceReportPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Compliance Report</h1>
-        <p className="text-sm text-muted-foreground">SLA adherence and statutory deadline tracking — IPDU-SOP-001</p>
+        <p className="text-sm text-muted-foreground">SLA adherence and statutory deadline tracking</p>
       </div>
 
       {/* KPIs */}
@@ -101,17 +92,37 @@ export default function ComplianceReportPage() {
                   </TableRow>
                 ))
               ) : prioritised.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={7} className="py-12 text-center text-muted-foreground">
-                    No cases found.
-                  </TableCell>
-                </TableRow>
+                <TableEmptyState
+                  colSpan={7}
+                  icon={TrendingUp}
+                  title="No cases to report on"
+                  description="Compliance metrics appear when cases exist in your scope."
+                >
+                  {perms.canCreateCase && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={() => navigate({ to: '/cases' })}
+                    >
+                      <Plus className="h-4 w-4 mr-1" />
+                      Go to cases
+                    </Button>
+                  )}
+                </TableEmptyState>
               ) : (
                 prioritised.map((c) => (
                   <TableRow
                     key={c.id as number}
-                    className="cursor-pointer"
+                    tabIndex={0}
+                    role="link"
+                    className="cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     onClick={() => navigate({ to: '/cases/$id', params: { id: String(c.id) } })}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault()
+                        navigate({ to: '/cases/$id', params: { id: String(c.id) } })
+                      }
+                    }}
                   >
                     <TableCell className="font-mono text-sm font-medium text-primary">
                       {c.reference_number as string}
@@ -119,16 +130,14 @@ export default function ComplianceReportPage() {
                     <TableCell className="font-medium">{c.subject_name as string}</TableCell>
                     <TableCell>
                       <Badge variant="outline" className="text-xs">
-                        {FAMILY_LABEL[c.case_family as string] ?? c.case_family as string}
+                        {familyLabel(c.case_family as string, 'short')}
                       </Badge>
                     </TableCell>
                     <TableCell className="text-xs text-muted-foreground">
                       {(c.active_stage as Record<string, string>)?.name ?? '—'}
                     </TableCell>
                     <TableCell>
-                      <Badge variant={SLA_VARIANT[c.overall_sla_status as string] ?? 'secondary'}>
-                        {(c.overall_sla_status as string)?.replace('_', ' ')}
-                      </Badge>
+                      <SlaBadge status={c.overall_sla_status as string} />
                     </TableCell>
                     <TableCell className="text-xs">{c.date_received as string}</TableCell>
                     <TableCell className="text-xs">{(c.assigned_officer_name as string) ?? '—'}</TableCell>

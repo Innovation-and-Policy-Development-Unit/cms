@@ -62,7 +62,7 @@ export default function LoginPage() {
         <Card>
           <CardHeader>
             <CardTitle className="text-base">Sign in to your account</CardTitle>
-            <CardDescription className="text-xs">IPDU-SOP-001 Authorised Access Only</CardDescription>
+            <CardDescription className="text-xs">Authorised access only</CardDescription>
           </CardHeader>
           <CardContent>
             <form onSubmit={handleSubmit} className="space-y-4">
@@ -92,12 +92,6 @@ export default function LoginPage() {
               <Button type="submit" className="w-full" disabled={loading}>
                 {loading ? 'Signing in…' : 'Sign In'}
               </Button>
-              {import.meta.env.DEV && (
-                <p className="text-center text-xs text-muted-foreground">
-                  Demo: username <span className="font-mono">admin</span> · password{' '}
-                  <span className="font-mono">Double@1991!</span>
-                </p>
-              )}
             </form>
           </CardContent>
         </Card>

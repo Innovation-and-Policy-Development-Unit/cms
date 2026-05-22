@@ -7,8 +7,13 @@ from rest_framework import filters, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
+from apps.accounts.models import User
 from apps.audit.utils import log_audit
+from apps.notifications.models import Notification
+from apps.notifications.utils import notify_user
 
+from .filters import CaseFilter
+from .scoping import cases_visible_to_user
 from .compliance import (
     assert_may_use_form_type,
     can_approve_portal_submission,
@@ -38,9 +43,13 @@ logger = logging.getLogger(__name__)
 class CaseViewSet(viewsets.ModelViewSet):
     queryset = Case.objects.select_related('assigned_officer', 'initiating_officer').prefetch_related('stages')
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    filterset_fields = ['status', 'case_family', 'is_senior_executive', 'portal_approval_status']
+    filterset_class = CaseFilter
     search_fields = ['reference_number', 'subject_name', 'subject_ministry']
     ordering_fields = ['date_opened', 'date_received', 'reference_number']
+
+    def get_queryset(self):
+        base = super().get_queryset()
+        return cases_visible_to_user(self.request.user, base)
 
     def get_serializer_class(self):
         if self.action == 'create':
@@ -276,6 +285,21 @@ class CaseViewSet(viewsets.ModelViewSet):
             request.user, 'portal_submit_approval', 'Case', case.id,
             f'{case.reference_number} submitted for manager portal approval',
         )
+        for manager in User.objects.filter(
+            role__in=[
+                User.Role.COMPLIANCE_MANAGER,
+                User.Role.ADMIN,
+                User.Role.SUPERADMIN,
+            ],
+            is_active=True,
+        ):
+            notify_user(
+                manager,
+                title='Approval required',
+                message=f'{case.reference_number} is pending manager portal approval.',
+                notif_type=Notification.NotifType.GENERAL,
+                related_case_id=case.id,
+            )
         return Response(CaseDetailSerializer(case, context={'request': request}).data)
 
     @action(detail=True, methods=['post'])
@@ -311,6 +335,20 @@ class CaseViewSet(viewsets.ModelViewSet):
                 request.user, 'cdp_registered', 'Case', case.id,
                 f'{case.reference_number} synced to SCDMS as {case.cdp_submission_id}',
             )
+        initiator = case.initiating_officer
+        if initiator and initiator != request.user:
+            sync_note = (
+                ' and synced to SCDMS.'
+                if portal_sync.get('status') == 'synced'
+                else '.'
+            )
+            notify_user(
+                initiator,
+                title=f'Portal approved: {case.reference_number}',
+                message=f'Your submission was approved by {request.user.get_full_name() or request.user.username}{sync_note}',
+                notif_type=Notification.NotifType.GENERAL,
+                related_case_id=case.id,
+            )
         return self._response_with_portal_sync(case, request, portal_sync=portal_sync)
 
     @action(detail=True, methods=['post'])
@@ -339,6 +377,15 @@ class CaseViewSet(viewsets.ModelViewSet):
             request.user, 'portal_rejected', 'Case', case.id,
             f'{case.reference_number} rejected for portal registration',
         )
+        initiator = case.initiating_officer
+        if initiator and initiator != request.user:
+            notify_user(
+                initiator,
+                title=f'Portal rejected: {case.reference_number}',
+                message=f'Your submission was rejected. Notes: {notes}',
+                notif_type=Notification.NotifType.GENERAL,
+                related_case_id=case.id,
+            )
         return Response(CaseDetailSerializer(case, context={'request': request}).data)
 
     @action(detail=True, methods=['post'], url_path='register-with-portal')
@@ -503,13 +550,17 @@ class CaseViewSet(viewsets.ModelViewSet):
 class DashboardStatsView(viewsets.ViewSet):
     def list(self, request):
         from django.db.models import Count, Q
-        total = Case.objects.count()
-        active = Case.objects.filter(status='active').count()
-        closed = Case.objects.filter(status='closed').count()
+        visible_cases = cases_visible_to_user(request.user, Case.objects.all())
+        visible_case_ids = visible_cases.values('pk')
+        total = visible_cases.count()
+        active = visible_cases.filter(status='active').count()
+        closed = visible_cases.filter(status='closed').count()
         overdue = CaseStage.objects.filter(
-            status='in_progress', sla_status='overdue'
+            case_id__in=visible_case_ids,
+            status='in_progress',
+            sla_status='overdue',
         ).values('case').distinct().count()
-        by_family = Case.objects.values('case_family').annotate(count=Count('id'))
+        by_family = visible_cases.values('case_family').annotate(count=Count('id'))
         return Response({
             'total_cases': total,
             'active_cases': active,

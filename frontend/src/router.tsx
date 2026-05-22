@@ -5,8 +5,7 @@ import { can } from '@/lib/permissions'
 import LoginPage              from '@/features/auth/LoginPage'
 import AppLayout              from '@/components/layout/AppLayout'
 import DashboardPage          from '@/features/dashboard/DashboardPage'
-import CaseListPage           from '@/features/cases/CaseListPage'
-import CaseDetailPage         from '@/features/cases/CaseDetailPage'
+import ApprovalQueuePage      from '@/features/cases/ApprovalQueuePage'
 import DocumentsPage          from '@/features/documents/DocumentsPage'
 import AuditPage              from '@/features/audit/AuditPage'
 import ActiveWorkflowsPage    from '@/features/workflows/ActiveWorkflowsPage'
@@ -20,6 +19,7 @@ import GroupsPage             from '@/features/admin/GroupsPage'
 import FormsTemplatesPage     from '@/features/admin/FormsTemplatesPage'
 import WorkflowConfigPage     from '@/features/admin/WorkflowConfigPage'
 import SystemSettingsPage     from '@/features/admin/SystemSettingsPage'
+import ProfilePage            from '@/features/profile/ProfilePage'
 
 /* ─── Helpers ──────────────────────────────────────────────────────────── */
 function getRole() { return useAuthStore.getState().user?.role ?? '' }
@@ -93,12 +93,22 @@ const workflowsLayout = createRoute({
   },
 })
 
+import { createCaseRoutes } from '@/routes/caseRoutes'
+
 /* ─── Routes ────────────────────────────────────────────────────────────── */
 const dashboardRoute         = createRoute({ getParentRoute: () => authLayout,      path: '/dashboard',              component: DashboardPage })
-const casesRoute             = createRoute({ getParentRoute: () => authLayout,      path: '/cases',                  component: CaseListPage })
-const caseDetailRoute        = createRoute({ getParentRoute: () => authLayout,      path: '/cases/$id',              component: CaseDetailPage })
+const { casesRoute, caseDetailRoute } = createCaseRoutes(authLayout)
+const approvalQueueRoute     = createRoute({
+  getParentRoute: () => authLayout,
+  path: '/approvals',
+  component: ApprovalQueuePage,
+  beforeLoad: () => {
+    if (!can(getRole(), 'approvePortal')) throw redirect({ to: '/dashboard' })
+  },
+})
 const myTasksRoute           = createRoute({ getParentRoute: () => authLayout,      path: '/workflows/my-tasks',     component: MyTasksPage })
 const documentsRoute         = createRoute({ getParentRoute: () => authLayout,      path: '/documents',              component: DocumentsPage })
+const profileRoute           = createRoute({ getParentRoute: () => authLayout,      path: '/profile',                component: ProfilePage })
 const activeWorkflowsRoute   = createRoute({ getParentRoute: () => workflowsLayout, path: '/workflows/active',       component: ActiveWorkflowsPage })
 const auditRoute             = createRoute({ getParentRoute: () => auditLayout,     path: '/audit',                  component: AuditPage })
 const caseStatisticsRoute    = createRoute({ getParentRoute: () => reportsLayout,   path: '/reports/statistics',     component: CaseStatisticsPage })
@@ -119,9 +129,11 @@ const routeTree = rootRoute.addChildren([
   authLayout.addChildren([
     dashboardRoute,
     casesRoute,
+    approvalQueueRoute,
     caseDetailRoute,
     myTasksRoute,
     documentsRoute,
+    profileRoute,
     workflowsLayout.addChildren([activeWorkflowsRoute]),
     auditLayout.addChildren([auditRoute]),
     reportsLayout.addChildren([caseStatisticsRoute, complianceReportRoute, litigationCostsRoute]),
@@ -137,6 +149,7 @@ const routeTree = rootRoute.addChildren([
 ])
 
 export const router = createRouter({ routeTree })
+export { casesRoute, caseDetailRoute }
 
 declare module '@tanstack/react-router' {
   interface Register { router: typeof router }

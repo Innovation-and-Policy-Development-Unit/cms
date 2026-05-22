@@ -2,18 +2,14 @@ import { useNavigate } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
 import { casesAPI } from '@/api/ccms'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 
-const FAMILY_LABEL: Record<string, string> = {
-  employee_disciplinary: 'Employee Disciplinary',
-  serious_misconduct_employee: 'Serious Misconduct',
-  temporary_suspension: 'Temp. Suspension',
-  grievance: 'Grievance',
-  senior_serious_misconduct: 'Senior — Misconduct',
-  senior_poor_performance: 'Senior — Performance',
-}
+import { familyLabel } from '@/lib/case-labels'
+import { TableEmptyState } from '@/components/ui/empty-state'
+import { Gavel } from 'lucide-react'
 
 export default function LitigationCostsPage() {
   const navigate = useNavigate()
@@ -94,11 +90,21 @@ export default function LitigationCostsPage() {
                   </TableRow>
                 ))
               ) : cases.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={7} className="py-16 text-center text-muted-foreground">
-                    No closed cases yet.
-                  </TableCell>
-                </TableRow>
+                <TableEmptyState
+                  colSpan={7}
+                  icon={Gavel}
+                  title="No closed cases yet"
+                  description="Litigation cost tracking appears once cases are closed."
+                >
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => navigate({ to: '/cases', search: { status: 'closed' } })}
+                  >
+                    View closed cases
+                  </Button>
+                </TableEmptyState>
               ) : (
                 cases.map((c) => {
                   const hasLitigation = ((c.litigation_records as unknown[])?.length ?? 0) > 0
@@ -115,7 +121,7 @@ export default function LitigationCostsPage() {
                       <TableCell className="text-xs text-muted-foreground">{(c.subject_ministry as string) || '—'}</TableCell>
                       <TableCell>
                         <Badge variant="outline" className="text-xs">
-                          {FAMILY_LABEL[c.case_family as string] ?? c.case_family as string}
+                          {familyLabel(c.case_family as string, 'short')}
                         </Badge>
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground">

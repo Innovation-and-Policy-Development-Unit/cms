@@ -4,6 +4,8 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { TableEmptyState } from '@/components/ui/empty-state'
+import { Scale } from 'lucide-react'
 
 const ACTION_VARIANT: Record<string, 'default' | 'secondary' | 'destructive'> = {
   case_created: 'default',
@@ -24,7 +26,7 @@ export default function AuditPage() {
     <div className="space-y-4">
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Audit Trail</h1>
-        <p className="text-sm text-muted-foreground">Immutable record of all system actions — IPDU-SOP-001</p>
+        <p className="text-sm text-muted-foreground">Immutable record of all system actions</p>
       </div>
 
       <Card>
@@ -49,11 +51,12 @@ export default function AuditPage() {
                   </TableRow>
                 ))
               ) : logs.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={5} className="py-12 text-center text-muted-foreground">
-                    No audit entries yet.
-                  </TableCell>
-                </TableRow>
+                <TableEmptyState
+                  colSpan={5}
+                  icon={Scale}
+                  title="No audit entries yet"
+                  description="Actions on cases, stages, and settings will appear here automatically."
+                />
               ) : (
                 logs.map((log: Record<string, unknown>) => (
                   <TableRow key={log.id as number}>

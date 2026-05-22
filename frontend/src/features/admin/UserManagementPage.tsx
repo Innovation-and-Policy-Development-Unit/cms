@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { Plus, Search, Pencil, Trash2, KeyRound, UserCheck, UserX, Shield } from 'lucide-react'
+import { Plus, Search, Pencil, Trash2, KeyRound, UserCheck, UserX, Shield, Users } from 'lucide-react'
 import { usersAPI } from '@/api/ccms'
 import { ROLE_LABELS } from '@/lib/permissions'
 import { Button } from '@/components/ui/button'
@@ -10,6 +10,7 @@ import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Card, CardContent } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { TableEmptyState } from '@/components/ui/empty-state'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Label } from '@/components/ui/label'
@@ -199,6 +200,8 @@ export default function UserManagementPage() {
 
   const allUsers: UserRow[] = data?.results ?? data ?? []
 
+  const hasFilters = Boolean(q || roleFilter || statusFilter)
+
   const users = allUsers.filter((u) => {
     const matchQ      = !q            || `${u.first_name} ${u.last_name} ${u.username} ${u.email}`.toLowerCase().includes(q.toLowerCase())
     const matchRole   = !roleFilter   || u.role === roleFilter
@@ -285,9 +288,37 @@ export default function UserManagementPage() {
                   <TableRow key={i}>{Array.from({ length: 7 }).map((_, j) => <TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>)}</TableRow>
                 ))
               ) : users.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={7} className="py-16 text-center text-muted-foreground">No users match the current filters.</TableCell>
-                </TableRow>
+                <TableEmptyState
+                  colSpan={7}
+                  icon={Users}
+                  title={
+                    hasFilters ? 'No users match the current filters' : 'No users yet'
+                  }
+                  description={
+                    hasFilters
+                      ? 'Try clearing filters or adjusting your search.'
+                      : 'Add a user account to grant access to CCMS.'
+                  }
+                >
+                  {hasFilters && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setQ('')
+                        setRoleFilter('')
+                        setStatusFilter('')
+                      }}
+                    >
+                      Clear filters
+                    </Button>
+                  )}
+                  <Button type="button" size="sm" onClick={() => setCreating(true)}>
+                    <Plus className="h-4 w-4 mr-1" />
+                    Add user
+                  </Button>
+                </TableEmptyState>
               ) : users.map((u) => (
                 <TableRow key={u.id as number}>
                   <TableCell>

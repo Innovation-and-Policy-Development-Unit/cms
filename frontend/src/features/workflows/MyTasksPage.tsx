@@ -9,18 +9,9 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Button } from '@/components/ui/button'
 import { AlertTriangle, Clock, CheckCircle, ArrowRight, CalendarDays } from 'lucide-react'
 
-const SLA_VARIANT: Record<string, 'destructive' | 'warning' | 'success' | 'secondary'> = {
-  overdue: 'destructive', at_risk: 'warning', on_track: 'success', completed: 'secondary',
-}
-
-const FAMILY_LABEL: Record<string, string> = {
-  employee_disciplinary:       'Employee Disciplinary',
-  serious_misconduct_employee: 'Serious Misconduct',
-  temporary_suspension:        'Temp. Suspension',
-  grievance:                   'Grievance',
-  senior_serious_misconduct:   'Senior — Misconduct',
-  senior_poor_performance:     'Senior — Performance',
-}
+import { familyLabel } from '@/lib/case-labels'
+import { SlaBadge } from '@/components/ui/sla-badge'
+import { EmptyState } from '@/components/ui/empty-state'
 
 type FilterTab = 'all' | 'overdue' | 'at_risk' | 'on_track'
 
@@ -97,10 +88,24 @@ export default function MyTasksPage() {
           {Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-28 w-full rounded-xl" />)}
         </div>
       ) : sorted.length === 0 ? (
-        <div className="flex h-48 flex-col items-center justify-center gap-2 rounded-xl border border-dashed text-muted-foreground">
-          <CheckCircle className="h-10 w-10 text-emerald-400" />
-          <p className="font-medium">No {activeTab === 'all' ? '' : activeTab.replace('_', ' ')} tasks</p>
-        </div>
+        <EmptyState
+          icon={CheckCircle}
+          title={
+            activeTab === 'all'
+              ? 'No tasks assigned to you'
+              : `No ${activeTab.replace('_', ' ')} tasks`
+          }
+          description="Cases where you are the assignee will show up here."
+        >
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => navigate({ to: '/cases' })}
+          >
+            Browse cases
+          </Button>
+        </EmptyState>
       ) : (
         <div className="space-y-3">
           {sorted.map((c) => {
@@ -116,7 +121,7 @@ export default function MyTasksPage() {
                       <div className="flex flex-wrap items-center gap-2 mb-1">
                         <span className="font-mono text-sm font-semibold text-primary">{c.reference_number as string}</span>
                         <Badge variant="outline" className="text-xs">
-                          {FAMILY_LABEL[c.case_family as string] ?? c.case_family as string}
+                          {familyLabel(c.case_family as string, 'short')}
                         </Badge>
                       </div>
                       <p className="text-base font-semibold">{c.subject_name as string}</p>
@@ -129,9 +134,7 @@ export default function MyTasksPage() {
                       )}
                     </div>
                     <div className="flex flex-col items-end gap-2 shrink-0">
-                      <Badge variant={SLA_VARIANT[c.overall_sla_status as string] ?? 'secondary'}>
-                        {(c.overall_sla_status as string)?.replace('_', ' ')}
-                      </Badge>
+                      <SlaBadge status={c.overall_sla_status as string} />
                       <span className="text-xs text-muted-foreground flex items-center gap-1">
                         <CalendarDays className="h-3 w-3" /> {c.date_received as string}
                       </span>

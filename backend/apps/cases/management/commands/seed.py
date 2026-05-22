@@ -19,6 +19,7 @@ from apps.cases.models import (
     CaseFamily, CaseStatus, StageStatus, SLAStatus, DecisionOutcome,
 )
 from apps.audit.models import AuditLog
+from apps.notifications.models import Notification
 
 
 USERS = [
@@ -227,6 +228,48 @@ class Command(BaseCommand):
             ))
         AuditLog.objects.bulk_create(audit_entries, ignore_conflicts=True)
         self.stdout.write(self.style.SUCCESS('  Audit log ready'))
+
+        # ── Notifications (demo inbox) ─────────────────────────────────────
+        self.stdout.write('Creating notifications...')
+        manager = user_map.get('m.compliance') or admin_user
+        sample_case = Case.objects.filter(status='active').first()
+        case_id = sample_case.pk if sample_case else None
+        for recipient in {admin_user, manager, compliance}:
+            Notification.objects.get_or_create(
+                recipient=recipient,
+                title='SLA warning: stage overdue',
+                defaults=dict(
+                    notif_type=Notification.NotifType.SLA_WARNING,
+                    message='A workflow stage has passed its statutory due date and requires action.',
+                    is_read=False,
+                    related_case_id=case_id,
+                ),
+            )
+            Notification.objects.get_or_create(
+                recipient=recipient,
+                title='Case pending manager approval',
+                defaults=dict(
+                    notif_type=Notification.NotifType.GENERAL,
+                    message='A compliance submission is awaiting your portal approval in CMS.',
+                    is_read=False,
+                    related_case_id=case_id,
+                ),
+            )
+            Notification.objects.get_or_create(
+                recipient=recipient,
+                title='Stage assigned to you',
+                defaults=dict(
+                    notif_type=Notification.NotifType.STAGE_ASSIGNED,
+                    message='Investigation report stage is now in progress on an active case.',
+                    is_read=True,
+                    related_case_id=case_id,
+                ),
+            )
+        self.stdout.write(self.style.SUCCESS('  Notifications ready'))
+
+        self.stdout.write('Seeding system settings and form templates...')
+        from django.core.management import call_command
+        call_command('seed_system')
 
         # ── Summary ────────────────────────────────────────────────────────
         self.stdout.write('')

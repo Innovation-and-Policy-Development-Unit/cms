@@ -4,6 +4,13 @@ export const authAPI = {
   login:  (username: string, password: string) => api.post('/auth/token/', { username, password }),
   logout: (refresh: string) => api.post('/auth/token/logout/', { refresh }),
   me:     () => api.get('/users/me/'),
+  updateMe: (data: {
+    first_name?: string
+    last_name?: string
+    email?: string
+    phone?: string
+    department?: string
+  }) => api.patch('/users/me/', data),
 }
 
 export const casesAPI = {
@@ -93,14 +100,21 @@ export const permissionsAPI = {
   list: (params?: Record<string, unknown>) => api.get('/permissions/', { params }),
 }
 
-/* ─── Workflow templates ─────────────────────────────────────────────────── */
+/* ─── System admin (settings, templates, statutory workflows) ───────────── */
+export const systemAPI = {
+  getSettings: () => api.get('/system-settings/'),
+  updateSettings: (data: Record<string, unknown>) => api.patch('/system-settings/', data),
+}
+
+export const formTemplatesAPI = {
+  list: () => api.get('/form-templates/'),
+  detail: (code: string) => api.get(`/form-templates/${code}/`),
+  download: (code: string) =>
+    api.get(`/form-templates/${code}/download/`, { responseType: 'blob' }),
+}
+
+/** Statutory workflows — read-only from backend workflow.py */
 export const workflowAPI = {
-  list:         (params?: Record<string, unknown>) => api.get('/workflow-templates/', { params }),
-  detail:       (id: number | string)              => api.get(`/workflow-templates/${id}/`),
-  update:       (id: number | string, data: Record<string, unknown>) =>
-    api.patch(`/workflow-templates/${id}/`, data),
-  listStages:   (templateId: number | string) =>
-    api.get(`/workflow-templates/${templateId}/stages/`),
-  updateStage:  (templateId: number | string, stageId: number | string, data: Record<string, unknown>) =>
-    api.patch(`/workflow-templates/${templateId}/stages/${stageId}/`, data),
+  list: () => api.get('/workflow-templates/'),
+  detail: (code: string) => api.get(`/workflow-templates/${code}/`),
 }

@@ -7,14 +7,7 @@ import {
   PieChart, Pie, Legend,
 } from 'recharts'
 
-const FAMILY_LABEL: Record<string, string> = {
-  employee_disciplinary: 'Employee Disciplinary',
-  serious_misconduct_employee: 'Serious Misconduct',
-  temporary_suspension: 'Temp. Suspension',
-  grievance: 'Grievance',
-  senior_serious_misconduct: 'Senior — Misconduct',
-  senior_poor_performance: 'Senior — Performance',
-}
+import { FAMILY_LABEL } from '@/lib/case-labels'
 
 const PALETTE = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4']
 

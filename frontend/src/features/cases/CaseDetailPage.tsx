@@ -1,12 +1,32 @@
 import { useState, useRef } from 'react'
-import { useParams, useNavigate } from '@tanstack/react-router'
+import { useParams, useNavigate, useSearch } from '@tanstack/react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import {
-  ArrowLeft, CheckCircle2, Upload, Trash2, FileText,
+  CheckCircle2, Upload, Trash2, FileText, Send,
   User, Calendar, Building, Briefcase, Plus, Lock,
-  Pencil, RotateCcw, StickyNote, Send, MessageSquare,
+  StickyNote, MessageSquare,
 } from 'lucide-react'
+import { PortalTimelineStepper } from './PortalTimelineStepper'
+import { CaseDetailActions } from './CaseDetailActions'
+import { ConfirmDialog } from '@/components/ui/confirm-dialog'
+import { TableEmptyState } from '@/components/ui/empty-state'
+import { Breadcrumbs } from '@/components/layout/Breadcrumbs'
+import { SlaBadge } from '@/components/ui/sla-badge'
+import { DocumentUploadDialog } from '@/components/documents/DocumentUploadDialog'
+import {
+  CASE_DETAIL_TAB_LABEL,
+  type CaseDetailSearch,
+  type CaseDetailTab,
+} from './caseDetailSearch'
+import {
+  CASE_FAMILIES,
+  DECISION_OUTCOME_OPTIONS,
+  FAMILY_LABEL,
+  PORTAL_APPROVAL_LABEL,
+  PORTAL_APPROVAL_VARIANT,
+  STAGE_STATUS_VARIANT,
+} from '@/lib/case-labels'
 import { casesAPI, documentsAPI, auditAPI } from '@/api/ccms'
 import { usePermissions } from '@/hooks/use-permissions'
 import { Button } from '@/components/ui/button'
@@ -20,61 +40,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Input } from '@/components/ui/input'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-
-/* ─── Constants ─────────────────────────────────────────────── */
-const SLA_VARIANT: Record<string, 'destructive' | 'warning' | 'success' | 'secondary'> = {
-  overdue: 'destructive', at_risk: 'warning', on_track: 'success', completed: 'secondary',
-}
-
-const STATUS_STAGE_VARIANT: Record<string, 'success' | 'info' | 'secondary'> = {
-  completed: 'success', in_progress: 'info', pending: 'secondary',
-}
-
-const DECISION_OUTCOMES = [
-  { value: 'reinstate',         label: 'Reinstated' },
-  { value: 'terminate',         label: 'Terminated / Dismissed' },
-  { value: 'warn',              label: 'Formal Warning Issued' },
-  { value: 'demote',            label: 'Demotion' },
-  { value: 'suspend_no_pay',    label: 'Suspension Without Pay' },
-  { value: 'compulsory_retire', label: 'Compulsory Retirement' },
-  { value: 'no_action',         label: 'No Further Action' },
-  { value: 'settled',           label: 'Settled (Grievance)' },
-  { value: 'not_settled',       label: 'Not Settled (Grievance)' },
-]
-
-const FAMILY_LABEL: Record<string, string> = {
-  employee_disciplinary:       'Employee Disciplinary',
-  serious_misconduct_employee: 'Serious Misconduct',
-  temporary_suspension:        'Temp. Suspension',
-  grievance:                   'Grievance',
-  senior_serious_misconduct:   'Senior — Serious Misconduct',
-  senior_poor_performance:     'Senior — Poor Performance',
-}
-
-const CASE_FAMILIES = [
-  { value: 'employee_disciplinary',       label: 'Employee Internal Disciplinary' },
-  { value: 'serious_misconduct_employee', label: 'Serious Misconduct — Employee' },
-  { value: 'temporary_suspension',        label: 'Temporary Suspension' },
-  { value: 'grievance',                   label: 'Grievance Process' },
-  { value: 'senior_serious_misconduct',   label: 'Senior Executive — Serious Misconduct' },
-  { value: 'senior_poor_performance',     label: 'Senior Executive — Poor Performance' },
-]
-
-const PORTAL_APPROVAL_LABEL: Record<string, string> = {
-  draft: 'Draft',
-  pending_manager: 'Pending Manager Approval',
-  approved: 'Approved for Portal',
-  rejected: 'Rejected',
-  sent_to_portal: 'Sent to Commission Portal',
-}
-
-const PORTAL_APPROVAL_VARIANT: Record<string, 'default' | 'secondary' | 'warning' | 'success' | 'destructive' | 'info'> = {
-  draft: 'secondary',
-  pending_manager: 'warning',
-  approved: 'success',
-  rejected: 'destructive',
-  sent_to_portal: 'info',
-}
 
 /* ─── Progress Tracker ──────────────────────────────────────── */
 function ProgressTracker({ stages }: { stages: Record<string, unknown>[] }) {
@@ -175,7 +140,7 @@ function OverviewTab({ c, isEmployee, isActive, caseId }: {
         </CardContent>
       </Card>
 
-      {c.description && (
+      {Boolean(c.description) && (
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-semibold">Description / Summary</CardTitle>
@@ -186,7 +151,7 @@ function OverviewTab({ c, isEmployee, isActive, caseId }: {
         </Card>
       )}
 
-      {c.portal_approval_notes && (
+      {Boolean(c.portal_approval_notes) && (
         <Card className="border-amber-200 bg-amber-50/50 dark:border-amber-900 dark:bg-amber-950/20">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-semibold">Portal approval notes</CardTitle>
@@ -267,10 +232,8 @@ function StagesTab({ stages, canComplete, onComplete }: {
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <Badge variant={SLA_VARIANT[stage.sla_status as string] ?? 'secondary'}>
-                {(stage.sla_status as string)?.replace('_', ' ')}
-              </Badge>
-              <Badge variant={STATUS_STAGE_VARIANT[stage.status as string] ?? 'secondary'}>
+              <SlaBadge status={stage.sla_status as string} size="sm" />
+              <Badge variant={STAGE_STATUS_VARIANT[stage.status as string] ?? 'secondary'}>
                 {stage.status as string}
               </Badge>
               {stage.status === 'in_progress' && canComplete && (
@@ -322,12 +285,19 @@ function DecisionsTab({ decisions, canAdd, onAdd }: {
 }
 
 /* ─── Documents Tab ─────────────────────────────────────────── */
-function DocumentsTab({ caseId, canUpload, canDelete }: {
-  caseId: string; canUpload: boolean; canDelete: boolean
+function DocumentsTab({
+  caseId,
+  caseLabel,
+  canUpload,
+  canDelete,
+}: {
+  caseId: string
+  caseLabel: string
+  canUpload: boolean
+  canDelete: boolean
 }) {
   const qc = useQueryClient()
-  const fileRef = useRef<HTMLInputElement>(null)
-  const [uploading, setUploading] = useState(false)
+  const [uploadOpen, setUploadOpen] = useState(false)
 
   const { data, isLoading } = useQuery({
     queryKey: ['documents', { case: caseId }],
@@ -335,33 +305,26 @@ function DocumentsTab({ caseId, canUpload, canDelete }: {
   })
   const docs: Record<string, unknown>[] = data?.results ?? data ?? []
 
-  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-    const fd = new FormData()
-    fd.append('file', file)
-    fd.append('title', file.name)
-    fd.append('doc_type', 'other')
-    fd.append('case', caseId)
-    setUploading(true)
-    try {
-      await documentsAPI.upload(fd)
-      qc.invalidateQueries({ queryKey: ['documents', { case: caseId }] })
-      toast.success('Document uploaded.')
-    } catch { toast.error('Upload failed.') }
-    finally { setUploading(false); if (fileRef.current) fileRef.current.value = '' }
-  }
-
   const colSpan = canDelete ? 6 : 5
 
   return (
     <div className="space-y-3">
       {canUpload && (
         <div className="flex justify-end">
-          <input ref={fileRef} type="file" className="hidden" onChange={handleUpload} />
-          <Button size="sm" variant="outline" onClick={() => fileRef.current?.click()} disabled={uploading} className="gap-1.5">
-            <Upload className="h-3.5 w-3.5" /> {uploading ? 'Uploading…' : 'Upload Document'}
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setUploadOpen(true)}
+            className="gap-1.5"
+          >
+            <Upload className="h-3.5 w-3.5" /> Upload document
           </Button>
+          <DocumentUploadDialog
+            open={uploadOpen}
+            onOpenChange={setUploadOpen}
+            caseId={caseId}
+            caseLabel={caseLabel}
+          />
         </div>
       )}
       <Card>
@@ -387,12 +350,25 @@ function DocumentsTab({ caseId, canUpload, canDelete }: {
                   </TableRow>
                 ))
               ) : docs.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={colSpan} className="py-12 text-center text-muted-foreground">
-                    <FileText className="mx-auto mb-2 h-8 w-8 opacity-30" />
-                    No documents attached to this case.
-                  </TableCell>
-                </TableRow>
+                <TableEmptyState
+                  colSpan={colSpan}
+                  icon={FileText}
+                  title="No documents on this case"
+                  description="Attach investigation reports, notices, and evidence here."
+                >
+                  {canUpload && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setUploadOpen(true)}
+                      className="gap-1.5"
+                    >
+                      <Upload className="h-3.5 w-3.5" />
+                      Upload document
+                    </Button>
+                  )}
+                </TableEmptyState>
               ) : docs.map((d) => (
                 <TableRow key={d.id as number}>
                   <TableCell className="font-medium">{d.title as string}</TableCell>
@@ -425,6 +401,8 @@ function InternalNotesTab({ caseId }: { caseId: string }) {
   const qc = useQueryClient()
   const [note, setNote] = useState('')
   const [saving, setSaving] = useState(false)
+  const [deleteNoteId, setDeleteNoteId] = useState<number | null>(null)
+  const [deleting, setDeleting] = useState(false)
 
   const { data, isLoading } = useQuery({
     queryKey: ['notes', caseId],
@@ -445,15 +423,33 @@ function InternalNotesTab({ caseId }: { caseId: string }) {
     finally { setSaving(false) }
   }
 
-  const handleDelete = async (noteId: number) => {
-    if (!confirm('Delete this note?')) return
-    await casesAPI.deleteNote(caseId, noteId)
-    qc.invalidateQueries({ queryKey: ['notes', caseId] })
-    toast.success('Note deleted.')
+  const handleDeleteConfirm = async () => {
+    if (deleteNoteId == null) return
+    setDeleting(true)
+    try {
+      await casesAPI.deleteNote(caseId, deleteNoteId)
+      qc.invalidateQueries({ queryKey: ['notes', caseId] })
+      toast.success('Note deleted.')
+      setDeleteNoteId(null)
+    } catch {
+      toast.error('Failed to delete note.')
+    } finally {
+      setDeleting(false)
+    }
   }
 
   return (
     <div className="space-y-4">
+      <ConfirmDialog
+        open={deleteNoteId != null}
+        onOpenChange={(open) => !open && setDeleteNoteId(null)}
+        title="Delete internal note?"
+        description="This private note will be permanently removed. It cannot be recovered from the audit trail as note text."
+        confirmLabel="Delete note"
+        variant="destructive"
+        loading={deleting}
+        onConfirm={handleDeleteConfirm}
+      />
       <Card className="border-amber-200 bg-amber-50/30 dark:border-amber-900 dark:bg-amber-950/10">
         <CardHeader className="pb-2">
           <CardTitle className="text-sm font-semibold flex items-center gap-2">
@@ -498,7 +494,7 @@ function InternalNotesTab({ caseId }: { caseId: string }) {
                     </div>
                     <p className="text-sm leading-relaxed">{n.content as string}</p>
                   </div>
-                  <Button size="sm" variant="ghost" onClick={() => handleDelete(n.id as number)}>
+                  <Button size="sm" variant="ghost" onClick={() => setDeleteNoteId(n.id as number)}>
                     <Trash2 className="h-3.5 w-3.5 text-destructive" />
                   </Button>
                 </div>
@@ -685,7 +681,7 @@ function DecisionDialog({ open, onOpenChange, caseId }: {
             <Select onValueChange={(v) => setForm((p) => ({ ...p, outcome: v }))} required>
               <SelectTrigger><SelectValue placeholder="Select outcome" /></SelectTrigger>
               <SelectContent>
-                {DECISION_OUTCOMES.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+                {DECISION_OUTCOME_OPTIONS.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>
@@ -719,8 +715,9 @@ function DecisionDialog({ open, onOpenChange, caseId }: {
 
 /* ─── Main Page ─────────────────────────────────────────────── */
 export default function CaseDetailPage() {
-  const { id } = useParams({ strict: false })
+  const { id: idParam } = useParams({ strict: false })
   const navigate = useNavigate()
+  const tabSearch = useSearch({ strict: false }) as CaseDetailSearch
   const qc = useQueryClient()
   const p = usePermissions()
   const [showDecision, setShowDecision]   = useState(false)
@@ -729,14 +726,20 @@ export default function CaseDetailPage() {
   const [showReject, setShowReject] = useState(false)
   const [rejectNotes, setRejectNotes] = useState('')
   const [portalBusy, setPortalBusy] = useState(false)
+  const [confirmClose, setConfirmClose] = useState(false)
+  const [confirmReopen, setConfirmReopen] = useState(false)
+  const [closeBusy, setCloseBusy] = useState(false)
+
+  if (!idParam || !/^\d+$/.test(idParam)) {
+    navigate({ to: '/cases' })
+    return null
+  }
+  const id = idParam
 
   const { data: c, isLoading } = useQuery({
     queryKey: ['case', id],
     queryFn:  () => casesAPI.detail(id).then((r) => r.data),
-    enabled:  /^\d+$/.test(id),
   })
-
-  if (!/^\d+$/.test(id)) { navigate({ to: '/cases' }); return null }
 
   if (isLoading) return (
     <div className="space-y-4">
@@ -751,20 +754,34 @@ export default function CaseDetailPage() {
   const isActive = c.status === 'active'
   const isClosed = c.status === 'closed'
 
-  const handleClose = async () => {
-    if (!confirm('Close this case? This marks it as closed and final.')) return
-    await casesAPI.close(id)
-    qc.invalidateQueries({ queryKey: ['case', id] })
-    toast.success('Case closed.')
+  const handleCloseConfirm = async () => {
+    setCloseBusy(true)
+    try {
+      await casesAPI.close(id)
+      qc.invalidateQueries({ queryKey: ['case', id] })
+      qc.invalidateQueries({ queryKey: ['cases'] })
+      toast.success('Case closed.')
+      setConfirmClose(false)
+    } catch {
+      toast.error('Failed to close case.')
+    } finally {
+      setCloseBusy(false)
+    }
   }
 
-  const handleReopen = async () => {
-    if (!confirm('Reopen this case?')) return
+  const handleReopenConfirm = async () => {
+    setCloseBusy(true)
     try {
       await casesAPI.reopen(id)
       qc.invalidateQueries({ queryKey: ['case', id] })
+      qc.invalidateQueries({ queryKey: ['cases'] })
       toast.success('Case reopened.')
-    } catch { toast.error('Failed to reopen case.') }
+      setConfirmReopen(false)
+    } catch {
+      toast.error('Failed to reopen case.')
+    } finally {
+      setCloseBusy(false)
+    }
   }
 
   const handleStageComplete = async (stageId: number) => {
@@ -774,15 +791,13 @@ export default function CaseDetailPage() {
   }
 
   const portalStatus = c.portal_approval_status as string | undefined
-  const canRetryScdmsSync =
-    isActive && !c.cdp_submission_id && p.canRecordDecision
-    && portalStatus === 'approved'
 
   const handleRegisterPortal = async () => {
     setPortalBusy(true)
     try {
       const data = await casesAPI.registerWithPortal(id).then((r) => r.data)
       qc.invalidateQueries({ queryKey: ['case', id] })
+      qc.invalidateQueries({ queryKey: ['cases', 'pending-approval-count'] })
       toast.success(`Registered with portal: ${data.cdp_submission_id}`)
       setShowRegisterPortal(false)
     } catch (err: unknown) {
@@ -798,6 +813,8 @@ export default function CaseDetailPage() {
     try {
       await casesAPI.submitForApproval(id)
       qc.invalidateQueries({ queryKey: ['case', id] })
+      qc.invalidateQueries({ queryKey: ['cases', 'pending-approval-count'] })
+      qc.invalidateQueries({ queryKey: ['cases', 'approval-queue'] })
       toast.success('Submitted for manager approval.')
     } catch (err: unknown) {
       const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
@@ -812,6 +829,8 @@ export default function CaseDetailPage() {
     try {
       const { data } = await casesAPI.approvePortal(id)
       qc.invalidateQueries({ queryKey: ['case', id] })
+      qc.invalidateQueries({ queryKey: ['cases', 'pending-approval-count'] })
+      qc.invalidateQueries({ queryKey: ['cases', 'approval-queue'] })
       const sync = data.portal_sync as { status?: string; cdp_submission_id?: string; detail?: string } | undefined
       if (sync?.status === 'synced') {
         toast.success(`Approved and synced to SCDMS (${sync.cdp_submission_id ?? 'linked'}).`)
@@ -839,6 +858,8 @@ export default function CaseDetailPage() {
     try {
       await casesAPI.rejectPortal(id, { notes: rejectNotes })
       qc.invalidateQueries({ queryKey: ['case', id] })
+      qc.invalidateQueries({ queryKey: ['cases', 'pending-approval-count'] })
+      qc.invalidateQueries({ queryKey: ['cases', 'approval-queue'] })
       toast.success('Case rejected for portal registration.')
       setShowReject(false)
       setRejectNotes('')
@@ -855,10 +876,15 @@ export default function CaseDetailPage() {
       {/* ── Header bar ── */}
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <Button variant="ghost" size="sm" className="mb-2 -ml-2 gap-1 text-muted-foreground"
-            onClick={() => navigate({ to: '/cases' })}>
-            <ArrowLeft className="h-4 w-4" /> Cases
-          </Button>
+          <Breadcrumbs
+            items={[
+              { label: 'Cases', to: '/cases' },
+              { label: c.reference_number as string },
+              ...(tabSearch.tab !== 'overview'
+                ? [{ label: CASE_DETAIL_TAB_LABEL[tabSearch.tab as CaseDetailTab] }]
+                : []),
+            ]}
+          />
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="text-xl font-bold font-mono">{c.reference_number}</h1>
             <Badge variant={isActive ? 'default' : 'secondary'} className="capitalize">{c.status}</Badge>
@@ -871,9 +897,7 @@ export default function CaseDetailPage() {
             {c.portal_form_type_code && (
               <Badge variant="outline" className="font-mono text-xs">{c.portal_form_type_code as string}</Badge>
             )}
-            <Badge variant={SLA_VARIANT[c.overall_sla_status] ?? 'secondary'}>
-              {c.overall_sla_status?.replace('_', ' ')}
-            </Badge>
+            <SlaBadge status={c.overall_sla_status as string} />
           </div>
           <p className="mt-1 text-base font-semibold">{c.subject_name}</p>
           <p className="text-sm text-muted-foreground">
@@ -881,54 +905,31 @@ export default function CaseDetailPage() {
           </p>
         </div>
 
-        {/* ── Action buttons — role-gated ── */}
-        <div className="flex flex-wrap gap-2">
-          {isActive && portalStatus === 'pending_manager' && p.canApprovePortal && (
-            <>
-              <Button size="sm" onClick={handleApprovePortal} disabled={portalBusy} className="gap-1.5">
-                <CheckCircle2 className="h-3.5 w-3.5" /> Approve for Portal
-              </Button>
-              <Button size="sm" variant="destructive" onClick={() => setShowReject(true)} disabled={portalBusy}>
-                Reject
-              </Button>
-            </>
-          )}
-          {isActive && (portalStatus === 'draft' || portalStatus === 'rejected')
-            && p.isComplianceSeniorPrincipal && c.portal_form_type_code && (
-            <Button size="sm" variant="outline" onClick={handleSubmitForApproval} disabled={portalBusy}>
-              Submit for Manager Approval
-            </Button>
-          )}
-          {canRetryScdmsSync && (
-            <Button size="sm" onClick={() => setShowRegisterPortal(true)} disabled={portalBusy} className="gap-1.5">
-              <Send className="h-3.5 w-3.5" /> Retry sync to SCDMS
-            </Button>
-          )}
-          {c.cdp_submission_id && (
-            <Badge variant="info" className="self-center font-mono text-xs">
-              CDP: {c.cdp_submission_id as string}
-            </Badge>
-          )}
-          {p.canEditMetadata && (
-            <Button size="sm" variant="outline" onClick={() => setShowEditMeta(true)} className="gap-1.5">
-              <Pencil className="h-3.5 w-3.5" /> Edit
-            </Button>
-          )}
-          {isActive && p.canRecordDecision && (
-            <Button size="sm" variant="outline" onClick={() => setShowDecision(true)} className="gap-1.5">
-              <Plus className="h-3.5 w-3.5" /> Record Decision
-            </Button>
-          )}
-          {isActive && p.canCloseCase && (
-            <Button size="sm" variant="destructive" onClick={handleClose}>Close Case</Button>
-          )}
-          {isClosed && p.canReopenCase && (
-            <Button size="sm" variant="outline" onClick={handleReopen} className="gap-1.5">
-              <RotateCcw className="h-3.5 w-3.5" /> Reopen Case
-            </Button>
-          )}
-        </div>
+        <CaseDetailActions
+          caseData={c}
+          isActive={isActive}
+          isClosed={isClosed}
+          portalBusy={portalBusy}
+          onEdit={() => setShowEditMeta(true)}
+          onRecordDecision={() => setShowDecision(true)}
+          onSubmitForApproval={handleSubmitForApproval}
+          onApprovePortal={handleApprovePortal}
+          onRejectPortal={() => setShowReject(true)}
+          onRetryScdms={() => setShowRegisterPortal(true)}
+          onCloseCase={() => setConfirmClose(true)}
+          onReopenCase={() => setConfirmReopen(true)}
+        />
       </div>
+
+      {/* ── SCDMS / portal journey ── */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-semibold">SCDMS &amp; portal journey</CardTitle>
+        </CardHeader>
+        <CardContent className="pb-5">
+          <PortalTimelineStepper caseData={c} />
+        </CardContent>
+      </Card>
 
       {/* ── Progress tracker ── */}
       <Card>
@@ -941,7 +942,16 @@ export default function CaseDetailPage() {
       </Card>
 
       {/* ── Tabs ── */}
-      <Tabs defaultValue="overview">
+      <Tabs
+        value={tabSearch.tab}
+        onValueChange={(v) =>
+          navigate({
+            to: '/cases/$id',
+            params: { id },
+            search: (prev: CaseDetailSearch) => ({ ...prev, tab: v as CaseDetailTab }),
+          })
+        }
+      >
         <TabsList className="mb-0 flex-wrap h-auto gap-y-1">
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="stages">Tasks / Stages</TabsTrigger>
@@ -971,7 +981,12 @@ export default function CaseDetailPage() {
           </TabsContent>
 
           <TabsContent value="documents">
-            <DocumentsTab caseId={id} canUpload={p.canUploadDocs} canDelete={p.canDeleteDocs} />
+            <DocumentsTab
+              caseId={id}
+              caseLabel={c.reference_number as string}
+              canUpload={p.canUploadDocs}
+              canDelete={p.canDeleteDocs}
+            />
           </TabsContent>
 
           {p.canSeeDecisions && (
@@ -1045,6 +1060,39 @@ export default function CaseDetailPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <ConfirmDialog
+        open={confirmClose}
+        onOpenChange={setConfirmClose}
+        title="Close this case?"
+        description={
+          <>
+            <p>The case will be marked <strong>closed</strong> in CMS. Open SLA stages will stop advancing here.</p>
+            {c.cdp_submission_id ? (
+              <p className="text-amber-700 dark:text-amber-400">
+                This case is linked to SCDMS ({c.cdp_submission_id as string}). Secretary and Commission
+                steps should be completed in SCDMS; CMS close reflects the compliance record only.
+              </p>
+            ) : (
+              <p>If you later register with SCDMS, reopen the case before syncing.</p>
+            )}
+          </>
+        }
+        confirmLabel="Close case"
+        variant="destructive"
+        loading={closeBusy}
+        onConfirm={handleCloseConfirm}
+      />
+
+      <ConfirmDialog
+        open={confirmReopen}
+        onOpenChange={setConfirmReopen}
+        title="Reopen this case?"
+        description="The case returns to active status in CMS. Workflow stages and portal approval state are unchanged."
+        confirmLabel="Reopen case"
+        loading={closeBusy}
+        onConfirm={handleReopenConfirm}
+      />
     </div>
   )
 }

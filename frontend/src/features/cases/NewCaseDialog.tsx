@@ -9,15 +9,9 @@ import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { CASE_FAMILIES } from '@/lib/case-labels'
 
-export const CASE_FAMILIES = [
-  { value: 'employee_disciplinary',       label: 'Employee Internal Disciplinary' },
-  { value: 'serious_misconduct_employee', label: 'Serious Misconduct — Employee' },
-  { value: 'temporary_suspension',        label: 'Temporary Suspension' },
-  { value: 'grievance',                   label: 'Grievance Process' },
-  { value: 'senior_serious_misconduct',   label: 'Senior Executive — Serious Misconduct' },
-  { value: 'senior_poor_performance',     label: 'Senior Executive — Poor Performance' },
-]
+export { CASE_FAMILIES } from '@/lib/case-labels'
 
 /* DG / Director can only create internal disciplinary and grievance cases */
 const DG_ALLOWED_FAMILIES = new Set(['employee_disciplinary', 'grievance'])
