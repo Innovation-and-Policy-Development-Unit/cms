@@ -171,8 +171,8 @@ function FilterBar({
 }
 
 export default function CaseListPage() {
-  const navigate = useNavigate({ from: '/cases' })
-  const search = useSearch({ from: '/cases' })
+  const navigate = useNavigate()
+  const search = useSearch({ strict: false }) as CasesSearch
   const p = usePermissions()
   const [newOpen, setNewOpen] = useState(false)
   const [qInput, setQInput] = useState(search.q)
@@ -185,13 +185,10 @@ export default function CaseListPage() {
   useEffect(() => {
     if (debouncedQ === search.q) return
     navigate({
-      search: (prev) => ({
-        ...prev,
-        q: debouncedQ,
-        page: 1,
-      }),
+      to: '/cases',
+      search: { ...search, q: debouncedQ, page: 1 },
     })
-  }, [debouncedQ, search.q, navigate])
+  }, [debouncedQ, search.q, navigate, search.page_size, search.case_family, search.status, search.ministry, search.portal_approval_status])
 
   const filters: Filters = {
     q: search.q,
@@ -203,10 +200,8 @@ export default function CaseListPage() {
 
   const setSearch = (patch: Partial<CasesSearch>) => {
     navigate({
-      search: (prev) => ({
-        ...prev,
-        ...patch,
-      }),
+      to: '/cases',
+      search: { ...search, ...patch },
     })
   }
 

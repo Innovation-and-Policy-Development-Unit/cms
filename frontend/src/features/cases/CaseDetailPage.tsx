@@ -948,7 +948,7 @@ export default function CaseDetailPage() {
           navigate({
             to: '/cases/$id',
             params: { id },
-            search: (prev: CaseDetailSearch) => ({ ...prev, tab: v as CaseDetailTab }),
+            search: { tab: v as CaseDetailTab },
           })
         }
       >
