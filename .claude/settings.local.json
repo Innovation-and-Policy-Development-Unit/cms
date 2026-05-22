@@ -1,0 +1,38 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//c/Users/USER/Documents/Case Management System/**)",
+      "Bash(python -c ' *)",
+      "Bash(pip install *)",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\USER\\\\Documents\\\\Case Management System\\\\react_context\" -Recurse -Force)",
+      "Bash(Select-Object FullName)",
+      "Bash(ConvertTo-Csv -NoTypeInformation)",
+      "Bash(Out-String)",
+      "PowerShell(Get-ChildItem -Path \"C:\\\\Users\\\\USER\\\\Documents\\\\Case Management System\\\\react_context\" -Recurse -Force | Select-Object FullName, @{Name='Type';Expression={if\\($_.PSIsContainer\\){'DIR'}else{'FILE'}}} | Format-Table -AutoSize)",
+      "Bash(New-Item -ItemType Directory -Force -Path apps, apps\\\\accounts, apps\\\\cases, apps\\\\documents, apps\\\\notifications, apps\\\\audit)",
+      "Bash(Out-Null)",
+      "Bash(New-Item -ItemType File -Force -Path apps\\\\__init__.py, apps\\\\accounts\\\\__init__.py, apps\\\\cases\\\\__init__.py, apps\\\\documents\\\\__init__.py, apps\\\\notifications\\\\__init__.py, apps\\\\audit\\\\__init__.py)",
+      "Read(//etc/**)",
+      "Read(//etc/docker/**)",
+      "Bash(systemctl is-active *)",
+      "Bash(nslookup auth.docker.io)",
+      "Bash(nslookup auth.docker.io 8.8.8.8)",
+      "Bash(docker info *)",
+      "Read(//mnt/c/Users/USER/AppData/Roaming/Docker/**)",
+      "Read(//mnt/c/Users/USER/AppData/Roaming/**)",
+      "Read(//mnt/c/Users/USER/AppData/Local/**)",
+      "Read(//mnt/c/ProgramData/**)",
+      "Read(//c/Users/USER/.docker/**)",
+      "Read(//mnt/c/Users/USER/Documents/Case Management System/**)",
+      "Bash(docker compose *)",
+      "Bash(xargs grep -l \"ThemeCustomizer\\\\|CustomizerProvider\\\\|TapTop\")",
+      "Bash(findstr /i \"\\\\\"dev\\\\\"\\\\|\\\\\"start\\\\\"\\\\|\\\\\"scripts\\\\\"\")",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\USER\\\\Documents\\\\Case Management System\\\\cms\" -Recurse)",
+      "Bash(docker -H npipe:////./pipe/dockerDesktopLinuxEngine compose -f \"C:/Users/USER/Documents/Case Management System/cms/docker-compose.yml\" logs backend --tail=30)",
+      "Bash(sudo ss -tlnp)",
+      "Bash(sudo lsof -i :5432)",
+      "Bash(netstat -tlnp)",
+      "Bash(chmod +x \"/home/ipdu/Documents/Case Management System/cms/backend/entrypoint.sh\")"
+    ]
+  }
+}
