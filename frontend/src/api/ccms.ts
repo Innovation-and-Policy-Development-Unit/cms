@@ -34,6 +34,7 @@ export const casesAPI = {
     api.post(`/cases/${caseId}/approve/`, data ?? {}),
   rejectPortal: (caseId: number | string, data: { notes: string }) =>
     api.post(`/cases/${caseId}/reject/`, data),
+  /** Pre-SCDMS CMS-only; blocked once case is linked to SCDMS. */
   signoff: (caseId: number | string, data: { outcome: string; notes?: string }) =>
     api.post(`/cases/${caseId}/signoff/`, data),
 }

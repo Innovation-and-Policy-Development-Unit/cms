@@ -1,118 +1,109 @@
 # CMS ↔ SCDMS operating model
 
-**Source:** Compliance workflow email (Compliance Manager & POs), following discussions on how the **Case Management System (CMS)** and **Submission and Decision Portal (SCDMS)** work together.
+**Source:** Compliance workflow email (Compliance Manager & POs).
 
-**Terminology in this repo:** The backend uses `CDP` / `CDP_BASE_URL` env names for the Commission Decision Portal integration; operationally this is **SCDMS**.
+**Terminology:** Env vars use `CDP_*` names; operationally this is **SCDMS**.
 
 ---
 
-## Recommended workflow (authoritative)
+## Recommended workflow
 
 | Step | Who | Where | What happens |
 |------|-----|-------|----------------|
 | 1 | Compliance **Senior**, **Principal**, or **Manager** | **CMS** | Create and maintain the compliance matter (case): **COMP-\*** form type, documents, statutory workflow, SLAs |
-| 2 | Compliance **Manager** (when required) | **CMS** | Approves the submission; the **approved case is synced to SCDMS** (approval required when created by Senior or Principal) |
-| 3 | System (automated) | **SCDMS** | Matter appears on **Submissions** list (OPSC internal) and goes **directly to Secretary review** |
-| 4 | Secretary & Commission | **SCDMS** | Review, agenda, deliberation, and decisions |
-| 5 | Secretariat (after decision) | **SCDMS** | Implementation of Minutes / Decision tasks **stay in SCDMS** — **not** moved back to CMS |
-| 6 | System (automated) | **CMS** | **Close** the CMS case when the linked SCDMS submission is fully complete (e.g. closed / implemented). Post-decision tasks remain in SCDMS until then |
+| 2 | Compliance **Manager** (when required) | **CMS** | Approves the submission; the **approved case is synced to SCDMS** |
+| 3 | System (automated) | **SCDMS** | Matter on **Submissions** list → Secretary review |
+| 4 | Secretary & Commission | **SCDMS** | Review, agenda, deliberation, decisions |
+| 5 | Secretariat (after decision) | **SCDMS** | Minutes / Decision implementation **only in SCDMS** |
+| 6 | System (automated) | **CMS** | **Close** CMS case when linked SCDMS submission is fully complete |
 
-### Principles
-
-- **Compliance staff:** create case in CMS → (if Senior/Principal) Manager approves in CMS → on approval, sync to SCDMS → Submissions list → Secretary review → Secretary & Commission work **only in SCDMS** → after decision, Minutes/Decision implementation **only in SCDMS** → when SCDMS matter is fully complete, **CMS case closes automatically** (tasks were never moved back to CMS).
-- **After step 3:** use **SCDMS** to track stage, decision, and post-decision tasks; use **CMS** for the case file until step 6 closes it.
-- **CMS closure follows SCDMS completion**, not the other way around.
-
-### Programme note (from email)
-
-- Manual compliance submission in SCDMS will be removed once API read from CMS is stable.
-- SCDMS is being developed to **read submissions from CMS via API** after Manager approval; they sync into Submissions for Secretary review.
-- Full compliance integration concludes when CMS development is complete.
-- Stakeholders should raise concerns on **approval rules**, **SLAs**, or **closure timing** before the manual SCDMS process is retired.
+**Principles:** CMS closure follows SCDMS completion. After step 3, SCDMS owns stage/decision/post-decision work; CMS holds the case file until step 6.
 
 ---
 
-## COMP-* form types (CMS)
+## Approval rules
 
-Aligned with SCDMS `compliance_forms.py` (see `backend/apps/cases/compliance.py`):
-
-| Code | Notes |
-|------|--------|
-| COMP-SMDR | |
-| COMP-PAR | |
-| COMP-PSDB | |
-| COMP-14D | |
-| COMP-OMB | |
-| COMP-PSA | Proposed Amendment to PSA — **Principal or Manager only** |
+| Creator role | Manager approval? | SCDMS sync trigger |
+|--------------|-------------------|-------------------|
+| Senior / Principal | Yes | On Manager **approve** (auto push or SCDMS pull) |
+| Manager | No (pre-approved on create) | On **create** if `CDP_*` configured, else pull/retry |
+| Compliance Unit (legacy) | Yes (as Senior/Principal) | Same as Senior/Principal |
 
 ---
 
-## Approval rules (CMS)
+## CMS implementation
 
-| Creator role | Manager approval before SCDMS sync? |
-|--------------|-------------------------------------|
-| Compliance **Senior** | **Yes** — submit for approval → Manager approves |
-| Compliance **Principal** | **Yes** |
-| Compliance **Manager** | **No** — case is **pre-approved** for portal registration (`approved` status on create) |
-| Compliance Unit (legacy) | Treated like Senior/Principal for approval |
+### Sync on approve (push)
 
----
+When a Manager calls `POST /api/v1/cases/{id}/approve/`, CMS:
 
-## How this maps to the current CMS codebase
+1. Sets `portal_approval_status` → `approved`
+2. Calls `sync_case_to_scdms()` → `POST {CDP_BASE_URL}/api/webhooks/cms-register/` when `CDP_BASE_URL` and `CDP_CALLBACK_SECRET` are set
+3. Returns `portal_sync` on the case response: `synced` | `failed` | `skipped`
 
-### Implemented (aligned)
+Manager-created cases (`approved` at create) auto-sync in `perform_create` when configured.
 
-| Operating step | CMS implementation |
-|----------------|-------------------|
-| 1 — Case in CMS | Cases, statutory stages/SLAs, documents, COMP-* on case (`portal_form_type_code`) |
-| 2 — Manager approval | `POST …/submit-for-approval/`, `…/approve/`, `…/reject/`; rules in `apps/cases/compliance.py` |
-| 2→3 — Sync to SCDMS | `POST …/register-with-portal/` → `CDP_BASE_URL/api/webhooks/cms-register/` with `X-CMS-Callback-Key` |
-| 6 — Close when SCDMS complete | `POST …/close-from-cdp/` (SCDMS callback, `X-CDP-Callback-Key` / `CDP_CALLBACK_SECRET`) |
+**Manual retry:** `POST /api/v1/cases/{id}/register-with-portal/` if push failed or env was missing.
 
-**Key files**
+### SCDMS API pull
 
-- `backend/apps/cases/compliance.py` — roles, COMP-* types, approval status rules
-- `backend/apps/cases/views.py` — portal approval + registration + `close_from_cdp`
-- `backend/apps/cases/models.py` — `portal_*`, `cdp_submission_id`, `cdp_callback_url`
-- `frontend/src/features/cases/CaseDetailPage.tsx` — portal approval UI
+Auth header (either): `X-CDP-Callback-Key` or `X-SCDMS-API-Key` = `CDP_CALLBACK_SECRET`.
 
-**Env (integration)**
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/api/v1/cases/scdms-queue/?pending_only=true` | List approved, active cases not yet in SCDMS (`cdp_submission_id` empty) |
+| GET | `/api/v1/cases/{id}/scdms-export/` | Full export payload for one case |
+| POST | `/api/v1/cases/{id}/scdms-ack/` | SCDMS confirms local submission created |
 
-- `CDP_BASE_URL` — SCDMS base URL (e.g. `http://localhost:8080`)
-- `CDP_CALLBACK_SECRET` — shared secret; must match SCDMS `CMS_CALLBACK_SECRET` / CMS `X-CMS-Callback-Key` on register; SCDMS uses `X-CDP-Callback-Key` on CMS `close-from-cdp`
+**Ack body:** `{ "cdp_submission_id": "PSC-…", "cdp_callback_url": "…", "cdp_submission_ref": "…" }`  
+Sets `portal_approval_status` → `sent_to_portal`, stores IDs.
 
-### Gaps / follow-up (per email + code review)
+Pull and push can coexist: SCDMS may pull when push is unavailable.
 
-| Item | Status |
-|------|--------|
-| **Auto-sync on Manager approve** | Email: sync on approval. CMS today: Manager **approve** then separate **Register with portal** action. Consider auto-calling register webhook on `approve` when `CDP_*` is configured. |
-| **SCDMS API pull from CMS** | In development on SCDMS side; CMS exposes register webhook + case metadata. |
-| **Post-decision work only in SCDMS** | Policy: do not replicate Minutes/Decision implementation tasks in CMS workflows. |
-| **`signoff` → CDP callback** | `POST …/signoff/` can notify CDP to move submission — may overlap old flow; Secretary/Commission path should be **SCDMS-only** after step 3. Review before production. |
-| **Remove manual SCDMS compliance submission** | Blocked until API sync + closure callback are production-ready. |
+### CMS → SCDMS push payload
 
----
+`POST {CDP_BASE_URL}/api/webhooks/cms-register/`  
+Header: `X-CMS-Callback-Key: {CDP_CALLBACK_SECRET}`
 
-## API contract summary (for SCDMS developers)
+Fields include: `cms_case_id`, `cms_case_reference`, `title`, `case_family`, `form_type_code`, `subject_name`, `subject_ministry`, `notes`, `registered_by`, `portal_approved_at`, …
 
-### CMS → SCDMS (register after approval)
+### SCDMS → CMS close (step 6)
 
-- **POST** `{CDP_BASE_URL}/api/webhooks/cms-register/`
-- **Header:** `X-CMS-Callback-Key: {CDP_CALLBACK_SECRET}`
-- **Body (JSON):** `cms_case_id`, `cms_case_reference`, `title`, `case_family`, `form_type_code`, `subject_ministry`, `notes`, `registered_by`
-- **Response:** `cdp_submission_id`, `cdp_callback_url`, …
+`POST /api/v1/cases/{id}/close-from-cdp/`  
+Header: `X-CDP-Callback-Key: {CDP_CALLBACK_SECRET}`  
+Body (optional): `cdp_submission_id`
 
-### SCDMS → CMS (close when fully complete)
+### Sign-off (`POST …/signoff/`) — legacy
 
-- **POST** `{CMS}/api/v1/cases/{id}/close-from-cdp/`
-- **Header:** `X-CDP-Callback-Key: {CDP_CALLBACK_SECRET}`
-- **Body (optional):** `cdp_submission_id`
-- Closes CMS case; idempotent if already closed.
+- **CMS-only** compliance decisions **before** SCDMS link.
+- **Blocked** when `cdp_submission_id` is set or `portal_approval_status` is `sent_to_portal`.
+- **No longer** calls SCDMS to move submissions to Secretary review (that happens at sync / in SCDMS).
 
 ---
 
-## What CMS must **not** do (per operating model)
+## Key files
 
-- Do **not** expect Secretary/Commission deliberation or post-decision implementation tasks in CMS after sync.
-- Do **not** close CMS cases before the linked SCDMS submission is fully complete.
-- Do **not** treat CMS as the system of record for Submissions-list / Secretary review stages after step 3.
+- `backend/apps/cases/portal_integration.py` — sync, export, shared secret
+- `backend/apps/cases/scdms_serializers.py` — pull queue serializer
+- `backend/apps/cases/views.py` — approve, register, scdms-queue/export/ack, signoff guard
+- `backend/apps/cases/compliance.py` — roles, COMP-* types
+- `frontend/src/features/cases/CaseDetailPage.tsx` — approve + retry sync UI
+
+---
+
+## Environment
+
+```env
+CDP_BASE_URL=http://scdms-host:8080
+CDP_CALLBACK_SECRET=<shared-secret>
+```
+
+Must match SCDMS `CMS_CALLBACK_SECRET` for register/ack/pull; SCDMS uses the same secret on `close-from-cdp`.
+
+---
+
+## What CMS must not do
+
+- Secretary/Commission deliberation or post-decision tasks in CMS after SCDMS sync
+- Close CMS before SCDMS submission is fully complete
+- Use sign-off to advance SCDMS workflow after step 3

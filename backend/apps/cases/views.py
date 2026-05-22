@@ -1,6 +1,5 @@
 import logging
 
-import requests
 from django.conf import settings
 from django.utils import timezone
 from django_filters.rest_framework import DjangoFilterBackend
@@ -15,6 +14,14 @@ from .compliance import (
     can_approve_portal_submission,
     requires_manager_approval,
 )
+from .portal_integration import (
+    apply_scdms_registration_response,
+    build_scdms_export_payload,
+    case_may_sync_to_scdms,
+    sync_case_to_scdms,
+    verify_scdms_integration_key,
+)
+from .scdms_serializers import ScdmsCaseExportSerializer
 from .models import Case, CaseStage, Decision, LitigationRecord, PortalApprovalStatus as PortalStatus
 from .serializers import (
     CaseCreateSerializer,
@@ -45,6 +52,14 @@ class CaseViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         case = serializer.save()
         log_audit(self.request.user, 'case_created', 'Case', case.id, f'Case {case.reference_number} created')
+        if case.portal_approval_status == PortalStatus.APPROVED and case.portal_form_type_code:
+            sync_case_to_scdms(case, self.request.user)
+
+    def _response_with_portal_sync(self, case, request, *, portal_sync: dict | None = None):
+        data = CaseDetailSerializer(case, context={'request': request}).data
+        if portal_sync is not None:
+            data['portal_sync'] = portal_sync
+        return Response(data)
 
     @action(detail=True, methods=['post'])
     def close(self, request, pk=None):
@@ -184,25 +199,29 @@ class CaseViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'], url_path='signoff')
     def signoff(self, request, pk=None):
         """
-        Compliance Manager signs off a case and notifies the CDP portal.
+        Record a CMS-only compliance decision before SCDMS sync.
 
-        Body (all optional except outcome):
-            outcome   – e.g. "cleared" or "referred_back"
-            notes     – free-text narrative
-
-        If cdp_callback_url is set on the case, fires a POST to the CDP
-        webhook so the submission is moved to Secretary Review automatically.
+        Deprecated for cases linked to SCDMS: Secretary and Commission work
+        (steps 4–5) must stay in SCDMS after portal registration.
         """
         case = self.get_object()
-        outcome = request.data.get('outcome', '').strip()
-        notes   = request.data.get('notes', '').strip()
+        if case.cdp_submission_id or case.portal_approval_status == PortalStatus.SENT_TO_PORTAL:
+            return Response(
+                {
+                    'detail': (
+                        'This case is linked to SCDMS. Secretary and Commission actions '
+                        'must be recorded in SCDMS, not via CMS sign-off.'
+                    ),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
+        outcome = request.data.get('outcome', '').strip()
+        notes = request.data.get('notes', '').strip()
         if not outcome:
             return Response({'detail': 'outcome is required.'}, status=status.HTTP_400_BAD_REQUEST)
 
         signoff_by = request.user.get_full_name() or request.user.username
-
-        # Record the decision in the CMS
         decision = Decision.objects.create(
             case=case,
             decided_by_role=getattr(request.user, 'role', 'compliance_unit'),
@@ -212,53 +231,13 @@ class CaseViewSet(viewsets.ModelViewSet):
             narrative=notes,
             created_by=request.user,
         )
-
         log_audit(
             request.user, 'compliance_signoff', 'Case', case.id,
             f'Compliance sign-off on {case.reference_number} by {signoff_by}: {outcome}',
         )
-
-        # Notify CDP portal if a callback URL is registered
-        if case.cdp_callback_url:
-            callback_secret = getattr(settings, 'CDP_CALLBACK_SECRET', '')
-            payload = {
-                'cdp_submission_id': case.cdp_submission_id,
-                'outcome':   outcome,
-                'signoff_by': signoff_by,
-                'notes':     notes,
-            }
-            try:
-                resp = requests.post(
-                    case.cdp_callback_url,
-                    json=payload,
-                    headers={'X-CMS-Callback-Key': callback_secret},
-                    timeout=15,
-                )
-                resp.raise_for_status()
-                logger.info(
-                    'signoff: CDP callback for %s succeeded (%s)',
-                    case.reference_number,
-                    case.cdp_submission_id,
-                )
-            except requests.RequestException as exc:
-                logger.error(
-                    'signoff: CDP callback for %s failed: %s',
-                    case.reference_number,
-                    exc,
-                )
-                return Response(
-                    {
-                        'detail': 'Sign-off recorded in CMS but CDP notification failed. '
-                                  'Please notify the PSC Secretary manually.',
-                        'cms_decision_id': decision.id,
-                        'cdp_error': str(exc),
-                    },
-                    status=status.HTTP_207_MULTI_STATUS,
-                )
-
         from .serializers import DecisionSerializer as DS
         return Response(
-            {'detail': 'Sign-off recorded.', 'decision': DS(decision).data},
+            {'detail': 'Sign-off recorded in CMS (pre-SCDMS only).', 'decision': DS(decision).data},
             status=status.HTTP_201_CREATED,
         )
 
@@ -326,7 +305,13 @@ class CaseViewSet(viewsets.ModelViewSet):
             request.user, 'portal_approved', 'Case', case.id,
             f'{case.reference_number} approved for portal registration',
         )
-        return Response(CaseDetailSerializer(case, context={'request': request}).data)
+        portal_sync = sync_case_to_scdms(case, request.user)
+        if portal_sync.get('status') == 'synced':
+            log_audit(
+                request.user, 'cdp_registered', 'Case', case.id,
+                f'{case.reference_number} synced to SCDMS as {case.cdp_submission_id}',
+            )
+        return self._response_with_portal_sync(case, request, portal_sync=portal_sync)
 
     @action(detail=True, methods=['post'])
     def reject(self, request, pk=None):
@@ -359,26 +344,16 @@ class CaseViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'], url_path='register-with-portal')
     def register_with_portal(self, request, pk=None):
         """
-        Create a linked submission in the Commission Decision Portal (CDP).
-        Compliance cases are authored in CMS; the portal is for Secretary / Commission tracking.
+        Push sync to SCDMS (retry after manager approval if auto-sync failed).
         """
         case = self.get_object()
         if case.cdp_submission_id:
             return Response(
                 {
-                    'detail': 'Case is already registered with the portal.',
+                    'detail': 'Case is already registered with SCDMS.',
                     'cdp_submission_id': case.cdp_submission_id,
                 },
                 status=status.HTTP_200_OK,
-            )
-
-        if case.portal_approval_status not in (
-            PortalStatus.APPROVED,
-            PortalStatus.SENT_TO_PORTAL,
-        ):
-            return Response(
-                {'detail': 'Case must be approved by a Compliance Manager before portal registration.'},
-                status=status.HTTP_400_BAD_REQUEST,
             )
 
         form_type_code = (
@@ -396,61 +371,123 @@ class CaseViewSet(viewsets.ModelViewSet):
         except ValueError as exc:
             return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
-        cdp_base = getattr(settings, 'CDP_BASE_URL', '').rstrip('/')
-        secret = getattr(settings, 'CDP_CALLBACK_SECRET', '')
-        if not cdp_base or not secret:
-            return Response(
-                {'detail': 'CDP_BASE_URL and CDP_CALLBACK_SECRET must be configured.'},
-                status=status.HTTP_503_SERVICE_UNAVAILABLE,
-            )
+        block = case_may_sync_to_scdms(case)
+        if block and not case.cdp_submission_id:
+            return Response({'detail': block}, status=status.HTTP_400_BAD_REQUEST)
 
-        payload = {
-            'cms_case_id': str(case.pk),
-            'cms_case_reference': case.reference_number,
-            'title': (case.description or case.subject_name or case.reference_number).strip(),
-            'case_family': case.case_family,
-            'form_type_code': form_type_code,
-            'subject_ministry': case.subject_ministry,
-            'notes': (case.notes or '')[:2000],
-            'registered_by': request.user.username,
-        }
-
-        try:
-            resp = requests.post(
-                f'{cdp_base}/api/webhooks/cms-register/',
-                json=payload,
-                headers={'X-CMS-Callback-Key': secret},
-                timeout=15,
+        portal_sync = sync_case_to_scdms(
+            case, request.user, form_type_code=form_type_code, push=True,
+        )
+        if portal_sync.get('status') == 'synced':
+            log_audit(
+                request.user, 'cdp_registered', 'Case', case.id,
+                f'Case {case.reference_number} registered with SCDMS as {case.cdp_submission_id}',
             )
-            resp.raise_for_status()
-            data = resp.json()
-        except requests.RequestException as exc:
-            logger.error('register_with_portal: CDP request failed for %s: %s', case.reference_number, exc)
-            detail = getattr(getattr(exc, 'response', None), 'text', None) or str(exc)
             return Response(
-                {'detail': f'Commission Portal registration failed: {detail}'},
+                {
+                    'cdp_submission_id': case.cdp_submission_id,
+                    'cdp_callback_url': case.cdp_callback_url,
+                    'portal_sync': portal_sync,
+                },
+                status=status.HTTP_201_CREATED,
+            )
+        if portal_sync.get('status') == 'failed':
+            return Response(
+                {'detail': portal_sync.get('detail', 'SCDMS registration failed.'), 'portal_sync': portal_sync},
                 status=status.HTTP_502_BAD_GATEWAY,
             )
+        return Response({'portal_sync': portal_sync}, status=status.HTTP_200_OK)
 
-        case.cdp_submission_id = data.get('cdp_submission_id', '')
-        case.cdp_submission_ref = (case.description or case.subject_name or '')[:100]
-        case.cdp_callback_url = data.get('cdp_callback_url', '')
-        case.portal_form_type_code = form_type_code
-        case.portal_approval_status = PortalStatus.SENT_TO_PORTAL
-        case.portal_sent_at = timezone.now()
-        case.save(update_fields=[
-            'cdp_submission_id', 'cdp_submission_ref', 'cdp_callback_url',
-            'portal_form_type_code', 'portal_approval_status', 'portal_sent_at',
-        ])
+    @action(detail=False, methods=['get'], url_path='scdms-queue')
+    def scdms_queue(self, request):
+        """
+        SCDMS pull: list manager-approved cases ready for ingestion.
 
+        Auth: X-CDP-Callback-Key or X-SCDMS-API-Key (= CDP_CALLBACK_SECRET).
+        Query: pending_only=true (default) — approved, active, not yet in SCDMS.
+        """
+        if not verify_scdms_integration_key(request):
+            return Response({'detail': 'Forbidden.'}, status=status.HTTP_403_FORBIDDEN)
+
+        pending_only = request.query_params.get('pending_only', 'true').lower() != 'false'
+        qs = Case.objects.filter(
+            status='active',
+            portal_approval_status=PortalStatus.APPROVED,
+        ).exclude(portal_form_type_code='').select_related(
+            'portal_approved_by', 'initiating_officer',
+        ).order_by('portal_approved_at', 'date_opened')
+
+        if pending_only:
+            qs = qs.filter(cdp_submission_id='')
+
+        page = self.paginate_queryset(qs)
+        serializer = ScdmsCaseExportSerializer(page if page is not None else qs, many=True)
+        if page is not None:
+            return self.get_paginated_response(serializer.data)
+        return Response(serializer.data)
+
+    @action(detail=True, methods=['get'], url_path='scdms-export')
+    def scdms_export(self, request, pk=None):
+        """SCDMS pull: full export payload for one approved case."""
+        if not verify_scdms_integration_key(request):
+            return Response({'detail': 'Forbidden.'}, status=status.HTTP_403_FORBIDDEN)
+
+        case = self.get_object()
+        if case.portal_approval_status not in (
+            PortalStatus.APPROVED,
+            PortalStatus.SENT_TO_PORTAL,
+        ):
+            return Response(
+                {'detail': 'Case is not approved for SCDMS.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return Response(build_scdms_export_payload(case))
+
+    @action(detail=True, methods=['post'], url_path='scdms-ack')
+    def scdms_ack(self, request, pk=None):
+        """
+        SCDMS pull: acknowledge ingestion after SCDMS created the submission locally.
+
+        Body: cdp_submission_id (required), optional cdp_callback_url, cdp_submission_ref.
+        """
+        if not verify_scdms_integration_key(request):
+            return Response({'detail': 'Forbidden.'}, status=status.HTTP_403_FORBIDDEN)
+
+        case = self.get_object()
+        if case.portal_approval_status not in (
+            PortalStatus.APPROVED,
+            PortalStatus.SENT_TO_PORTAL,
+        ):
+            return Response(
+                {'detail': 'Case is not approved for SCDMS.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        cdp_id = (request.data.get('cdp_submission_id') or '').strip()
+        if not cdp_id:
+            return Response(
+                {'detail': 'cdp_submission_id is required.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        data = {
+            'cdp_submission_id': cdp_id,
+            'cdp_callback_url': (request.data.get('cdp_callback_url') or '').strip(),
+            'cdp_submission_ref': (request.data.get('cdp_submission_ref') or '').strip(),
+        }
+        apply_scdms_registration_response(case, data)
         log_audit(
-            request.user,
+            None,
             'cdp_registered',
             'Case',
             case.id,
-            f'Case {case.reference_number} registered with CDP as {case.cdp_submission_id}',
+            f'{case.reference_number} acknowledged by SCDMS pull as {cdp_id}',
         )
-        return Response(data, status=status.HTTP_201_CREATED)
+        return Response({
+            'status': 'acknowledged',
+            'reference_number': case.reference_number,
+            'cdp_submission_id': case.cdp_submission_id,
+        })
 
     @action(detail=True, methods=['get', 'post'])
     def litigation(self, request, pk=None):

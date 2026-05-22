@@ -102,7 +102,7 @@ class Case(models.Model):
     cdp_submission_ref = models.CharField(max_length=100, blank=True, default="",
         help_text="Human-readable CDP title / label (denormalised for display).")
     cdp_callback_url   = models.URLField(max_length=500, blank=True, default="",
-        help_text="CDP webhook URL to call when compliance manager signs off.")
+        help_text="SCDMS callback URL (reserved; CMS does not drive Secretary review after sync).")
 
     class Meta:
         ordering = ['-date_opened']

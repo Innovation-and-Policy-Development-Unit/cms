@@ -774,9 +774,9 @@ export default function CaseDetailPage() {
   }
 
   const portalStatus = c.portal_approval_status as string | undefined
-  const canRegisterPortal =
+  const canRetryScdmsSync =
     isActive && !c.cdp_submission_id && p.canRecordDecision
-    && (portalStatus === 'approved' || portalStatus === 'sent_to_portal')
+    && portalStatus === 'approved'
 
   const handleRegisterPortal = async () => {
     setPortalBusy(true)
@@ -810,9 +810,18 @@ export default function CaseDetailPage() {
   const handleApprovePortal = async () => {
     setPortalBusy(true)
     try {
-      await casesAPI.approvePortal(id)
+      const { data } = await casesAPI.approvePortal(id)
       qc.invalidateQueries({ queryKey: ['case', id] })
-      toast.success('Approved for Commission Portal registration.')
+      const sync = data.portal_sync as { status?: string; cdp_submission_id?: string; detail?: string } | undefined
+      if (sync?.status === 'synced') {
+        toast.success(`Approved and synced to SCDMS (${sync.cdp_submission_id ?? 'linked'}).`)
+      } else if (sync?.status === 'failed') {
+        toast.warning('Approved, but SCDMS sync failed. Use Retry sync to SCDMS.')
+      } else if (sync?.status === 'skipped') {
+        toast.success('Approved. SCDMS will pull this case via API or retry sync when configured.')
+      } else {
+        toast.success('Approved for SCDMS registration.')
+      }
     } catch (err: unknown) {
       const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
       toast.error(detail || 'Approval failed.')
@@ -890,9 +899,9 @@ export default function CaseDetailPage() {
               Submit for Manager Approval
             </Button>
           )}
-          {canRegisterPortal && (
+          {canRetryScdmsSync && (
             <Button size="sm" onClick={() => setShowRegisterPortal(true)} disabled={portalBusy} className="gap-1.5">
-              <Send className="h-3.5 w-3.5" /> Register with Commission Portal
+              <Send className="h-3.5 w-3.5" /> Retry sync to SCDMS
             </Button>
           )}
           {c.cdp_submission_id && (
@@ -1004,16 +1013,16 @@ export default function CaseDetailPage() {
       <Dialog open={showRegisterPortal} onOpenChange={setShowRegisterPortal}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>Register with Commission Portal</DialogTitle>
+            <DialogTitle>Retry sync to SCDMS</DialogTitle>
           </DialogHeader>
           <p className="text-sm text-muted-foreground">
-            Creates a linked OPSC internal submission at Secretary Review. Type:{' '}
+            Push this approved case to SCDMS (Submissions list → Secretary review). Type:{' '}
             <strong>{(c.portal_form_type_code as string) || '—'}</strong>
           </p>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setShowRegisterPortal(false)}>Cancel</Button>
             <Button type="button" disabled={portalBusy} onClick={handleRegisterPortal}>
-              {portalBusy ? 'Registering…' : 'Register'}
+              {portalBusy ? 'Syncing…' : 'Sync to SCDMS'}
             </Button>
           </DialogFooter>
         </DialogContent>
